@@ -30,6 +30,11 @@ exportsRouter.get("/:id/export/activity.csv", async (req, res) => {
   const from = asString(req.query.from) ?? null;
   const to = asString(req.query.to) ?? null;
 
+  // FIX (ACME-431): When 'to' date is provided as YYYY-MM-DD (10 chars), extend it to end-of-day 
+  // (23:59:59.999Z). Without this, SQL timestamp casting ('2026-08-18'::timestamptz) defaults to 
+  // 00:00:00.000Z, truncating and omitting all activity events generated during the selected end date.
+  const toParam = to ? (to.length === 10 ? `${to}T23:59:59.999Z` : to) : null;
+
   const organization = await getOrganization(orgId);
   if (!organization) throw new HttpError(404, "Organization not found.");
 
@@ -58,10 +63,10 @@ exportsRouter.get("/:id/export/activity.csv", async (req, res) => {
         where e.org_id = $1
           and ($2::timestamptz is null or e.created_at >= $2::timestamptz)
           and ($3::timestamptz is null or e.created_at <= $3::timestamptz)
-        order by e.created_at desc
+        order by e.created_at desc, e.id desc
         limit $4 offset $5
       `,
-      [orgId, from, to, BATCH_SIZE, offset],
+      [orgId, from, toParam, BATCH_SIZE, offset],
     );
 
     if (rows.length === 0) break;
